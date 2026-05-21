@@ -247,8 +247,17 @@ function ModalRegistroDiario({show,onClose,asignaciones,camiones,personal,produc
   const[saving,setSaving]=useState(false);
 
   useEffect(()=>{
-    if(show) setItems(productos.slice(0,6).map(p=>({producto_id:p.id,nombre:p.nombre,unidad:p.unidad,cantidad:0,precio:p.precio_unitario})));
-  },[show,productos]);
+    if(!show) return;
+    // Cargar TODOS los productos activos de la BD
+    sb.from("productos").select("*").eq("activo", true).order("nombre").then(({ data }) => {
+      const prods = data || [];
+      if (prods.length > 0) {
+        setItems(prods.map(p => ({ producto_id: p.id, nombre: p.nombre, unidad: p.unidad, cantidad: 0, precio: p.precio_unitario })));
+      } else {
+        setItems([]);
+      }
+    });
+  },[show]);
 
   const upd=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
   const total=items.reduce((s,i)=>s+(parseFloat(i.cantidad)||0)*(parseFloat(i.precio)||0),0);
@@ -300,7 +309,13 @@ function ModalRegistroDiario({show,onClose,asignaciones,camiones,personal,produc
       {!esNP&&(
         <>
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2 border-t border-gray-100 pt-3">Consumibles utilizados</p>
-          <table className="w-full text-sm mb-3">
+          {items.length === 0 && (
+            <div className="text-center py-6 bg-amber-50 border border-amber-200 rounded-xl mb-3">
+              <p className="text-sm text-amber-700 font-medium">No hay productos en el catálogo</p>
+              <p className="text-xs text-amber-600 mt-1">Ve a <strong>Administración → 📦 Inventario</strong> y añade los productos primero</p>
+            </div>
+          )}
+          {items.length > 0 && <table className="w-full text-sm mb-3">
             <thead><tr className="border-b border-gray-100"><th className="text-left pb-2 text-xs text-gray-500 font-medium">Producto</th><th className="text-center pb-2 text-xs text-gray-500 font-medium w-16">Uds.</th><th className="text-center pb-2 text-xs text-gray-500 font-medium w-20">€/ud</th><th className="text-right pb-2 text-xs text-gray-500 font-medium w-20">Total</th></tr></thead>
             <tbody>
               {items.map((it,i)=>(
@@ -312,7 +327,7 @@ function ModalRegistroDiario({show,onClose,asignaciones,camiones,personal,produc
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table>}
           <div className="flex justify-between items-center bg-teal-50 rounded-xl px-4 py-3 border border-teal-200">
             <span className="text-sm text-teal-700">Coste total materiales</span>
             <span className="text-lg font-medium text-teal-800">{total.toFixed(2)} €</span>
@@ -732,15 +747,15 @@ function PanelAdmin({camiones,personal,seccionInicial,onRefresh}){
 
   return(
     <div>
-      <div className="flex gap-2 mb-5">
-        {["camiones","personal","obras"].map(s=>(
+      <div className="flex gap-2 mb-5 flex-wrap">
+        {["camiones","personal","obras","inventario"].map(s=>(
           <button key={s} onClick={()=>setSeccion(s)}
             className={`px-4 py-2 rounded-xl text-sm font-medium border transition-colors ${seccion===s?"bg-gray-900 text-white border-gray-900":"bg-white text-gray-600 border-gray-200 hover:bg-gray-50"}`}>
-            {s==="camiones"?"🚛 Camiones":s==="personal"?"👷 Personal":"🏗 Obras"}
+            {s==="camiones"?"🚛 Camiones":s==="personal"?"👷 Personal":s==="obras"?"🏗 Obras":"📦 Inventario"}
           </button>
         ))}
         <button onClick={()=>{setEditando(null);setShowModal(true);}} className="ml-auto px-4 py-2 rounded-xl text-sm font-medium bg-teal-600 text-white hover:bg-teal-700 transition-colors">
-          ＋ {seccion==="camiones"?"Camión":seccion==="personal"?"Empleado":"Obra"}
+          ＋ {seccion==="camiones"?"Camión":seccion==="personal"?"Empleado":seccion==="obras"?"Obra":"Producto"}
         </button>
       </div>
       {seccion==="camiones"&&(
@@ -783,7 +798,8 @@ function PanelAdmin({camiones,personal,seccionInicial,onRefresh}){
         </div>
       )}
       {seccion==="obras"&&<PanelObrasAdmin onRefresh={onRefresh}/>}
-      {showModal&&(seccion==="camiones"?<ModalCamion show item={editando} onClose={cerrar} onSaved={()=>{cerrar();onRefresh();}}/>:seccion==="personal"?<ModalPersonal show item={editando} onClose={cerrar} onSaved={()=>{cerrar();onRefresh();}}/>:<ModalObraAdmin show item={editando} onClose={cerrar} onSaved={()=>{cerrar();onRefresh();}}/>)}
+      {seccion==="inventario"&&<PanelInventarioAdmin onEditar={(p)=>{setEditando(p);setShowModal(true);}} onRefresh={onRefresh}/>}
+      {showModal&&(seccion==="camiones"?<ModalCamion show item={editando} onClose={cerrar} onSaved={()=>{cerrar();onRefresh();}}/>:seccion==="personal"?<ModalPersonal show item={editando} onClose={cerrar} onSaved={()=>{cerrar();onRefresh();}}/>:seccion==="obras"?<ModalObraAdmin show item={editando} onClose={cerrar} onSaved={()=>{cerrar();onRefresh();}}/>:<ModalProducto show item={editando} onClose={cerrar} onSaved={()=>{cerrar();onRefresh();}}/>)}
       <ConfirmDialog show={!!confirm} message={`¿Eliminar "${confirm?.nombre}"?`} onConfirm={()=>eliminar(confirm.tabla,confirm.id)} onCancel={()=>setConfirm(null)}/>
     </div>
   );
@@ -820,6 +836,111 @@ function ModalObraAdmin({show,item,onClose,onSaved}){
   const handleCP=async(v)=>{set("cp",v);if(v.length===5){setGeoLoading(true);const geo=await geocodeCP(v);if(geo){set("provincia",geo.provincia);set("poblacion",geo.poblacion);set("latitud",geo.lat);set("longitud",geo.lon);}setGeoLoading(false);}};
   const handleSave=async()=>{if(!f.numero_obra)return;setSaving(true);const data={numero_obra:f.numero_obra,tipo_via:f.tipo_via,nombre_via:f.nombre_via,numero_via:f.numero_via,info_adicional:f.info_adicional,cp:f.cp,provincia:f.provincia,poblacion:f.poblacion,latitud:f.latitud||null,longitud:f.longitud||null,estado:f.estado};if(item?.id)await sb.from("obras").update(data).eq("id",item.id);else await sb.from("obras").insert(data);setSaving(false);onSaved();};
   return(<Modal show={show} onClose={onClose} wide title={item?.id?"✏️ Editar obra":"🏗 Nueva obra"} footer={<div className="flex justify-end gap-2"><Btn variant="secondary" onClick={onClose}>Cancelar</Btn><Btn onClick={handleSave} disabled={saving||!f.numero_obra}>{saving?"Guardando...":"Guardar"}</Btn></div>}><div className="grid grid-cols-2 gap-3"><FL label="Nº de obra *"><Inp value={f.numero_obra} onChange={v=>set("numero_obra",v)} placeholder="Ej: 1045"/></FL><FL label="Estado"><Sel value={f.estado} onChange={v=>set("estado",v)} options={Object.entries(ESTADOS).map(([k,v])=>({value:k,label:v}))}/></FL></div><div className="border-t border-gray-100 my-3 pt-3"><p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Dirección</p><div className="grid grid-cols-3 gap-2 mb-2"><Sel value={f.tipo_via} onChange={v=>set("tipo_via",v)} options={["Calle","Avenida","Carretera","Paseo","Plaza","Camino","Polígono"].map(x=>({value:x,label:x}))}/><div className="col-span-2"><Inp value={f.nombre_via} onChange={v=>set("nombre_via",v)} placeholder="Nombre de la vía"/></div></div><div className="grid grid-cols-2 gap-2 mb-2"><Inp value={f.numero_via} onChange={v=>set("numero_via",v)} placeholder="Nº / Km"/><Inp value={f.info_adicional} onChange={v=>set("info_adicional",v)} placeholder="Info adicional"/></div><div className="grid grid-cols-3 gap-2 mb-1"><div><Inp value={f.cp} onChange={handleCP} placeholder="C.P."/>{geoLoading&&<p className="text-xs text-teal-600 mt-1">⟳ Buscando...</p>}</div><Inp value={f.provincia} onChange={v=>set("provincia",v)} placeholder="Provincia"/><Inp value={f.poblacion} onChange={v=>set("poblacion",v)} placeholder="Población"/></div><div className="grid grid-cols-2 gap-2 mt-1"><Inp value={f.latitud} onChange={v=>set("latitud",v)} placeholder="Latitud"/><Inp value={f.longitud} onChange={v=>set("longitud",v)} placeholder="Longitud"/></div></div></Modal>);
+}
+
+
+// ── PANEL INVENTARIO ADMIN ────────────────────────────────────────────────────
+function PanelInventarioAdmin({ onEditar, onRefresh }) {
+  const [productos, setProductos] = useState([]);
+  const [confirm, setConfirm] = useState(null);
+
+  const load = () => sb.from("productos").select("*").order("nombre").then(({ data }) => setProductos(data || []));
+  useEffect(() => { load(); }, []);
+
+  const eliminar = async (id) => {
+    await sb.from("productos").delete().eq("id", id);
+    setConfirm(null); load(); onRefresh();
+  };
+
+  return (
+    <div>
+      <p className="text-xs text-gray-500 mb-4">Estos productos aparecerán en el formulario de Registro diario para que el equipo seleccione los consumibles utilizados cada día.</p>
+      {productos.length === 0 && (
+        <div className="text-center py-12 bg-white border border-dashed border-gray-300 rounded-2xl">
+          <div className="text-3xl mb-2">📦</div>
+          <p className="text-sm text-gray-500 mb-1">No hay productos todavía</p>
+          <p className="text-xs text-gray-400">Pulsa "＋ Producto" arriba para añadir el primero</p>
+        </div>
+      )}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {productos.map(p => (
+          <div key={p.id} className="bg-white border border-gray-200 rounded-2xl p-4">
+            <div className="flex items-start justify-between mb-2">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-amber-50 rounded-xl flex items-center justify-center text-xl">📦</div>
+                <div>
+                  <p className="text-sm font-medium text-gray-900">{p.nombre}</p>
+                  <p className="text-xs text-gray-500">Unidad: {p.unidad}</p>
+                </div>
+              </div>
+              <div className="flex gap-1">
+                <button onClick={() => onEditar(p)} className="text-xs text-gray-400 hover:text-gray-700 px-2 py-1 rounded border border-gray-200 hover:bg-gray-50">✏️</button>
+                <button onClick={() => setConfirm({ id: p.id, nombre: p.nombre })} className="text-xs text-red-400 px-2 py-1 rounded border border-red-100 hover:bg-red-50">🗑</button>
+              </div>
+            </div>
+            <div className="flex items-center justify-between mt-2">
+              <span className="text-xs text-gray-400">Precio referencia</span>
+              <span className="text-sm font-medium text-teal-700">{parseFloat(p.precio_unitario || 0).toFixed(2)} €/{p.unidad}</span>
+            </div>
+            <span className={`mt-2 inline-block text-xs px-2 py-0.5 rounded-full border ${p.activo ? "bg-teal-50 text-teal-700 border-teal-200" : "bg-gray-100 text-gray-500 border-gray-200"}`}>
+              {p.activo ? "Activo" : "Inactivo"}
+            </span>
+          </div>
+        ))}
+      </div>
+      <ConfirmDialog show={!!confirm} message={`¿Eliminar el producto "${confirm?.nombre}"?`} onConfirm={() => eliminar(confirm.id)} onCancel={() => setConfirm(null)} />
+    </div>
+  );
+}
+
+// ── MODAL PRODUCTO ────────────────────────────────────────────────────────────
+function ModalProducto({ show, item, onClose, onSaved }) {
+  const [f, setF] = useState({ nombre: "", unidad: "ud", precio_unitario: "", activo: true });
+  const [saving, setSaving] = useState(false);
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  useEffect(() => {
+    if (item) setF({ nombre: item.nombre || "", unidad: item.unidad || "ud", precio_unitario: item.precio_unitario || "", activo: item.activo ?? true });
+    else setF({ nombre: "", unidad: "ud", precio_unitario: "", activo: true });
+  }, [item, show]);
+
+  const handleSave = async () => {
+    if (!f.nombre) return;
+    setSaving(true);
+    const data = { nombre: f.nombre, unidad: f.unidad, precio_unitario: parseFloat(f.precio_unitario) || 0, activo: f.activo };
+    if (item?.id) await sb.from("productos").update(data).eq("id", item.id);
+    else await sb.from("productos").insert(data);
+    setSaving(false); onSaved();
+  };
+
+  const UNIDADES = ["ud", "ml", "l", "g", "kg", "m", "ml", "saco", "caja", "rollo", "litro", "garraf."];
+
+  return (
+    <Modal show={show} onClose={onClose} title={item?.id ? "✏️ Editar producto" : "📦 Nuevo producto"}
+      footer={<div className="flex justify-end gap-2"><Btn variant="secondary" onClick={onClose}>Cancelar</Btn><Btn onClick={handleSave} disabled={saving || !f.nombre}>{saving ? "Guardando..." : "Guardar"}</Btn></div>}>
+      <FL label="Nombre del producto *">
+        <Inp value={f.nombre} onChange={v => set("nombre", v)} placeholder="Ej: Bentonita en polvo" />
+      </FL>
+      <div className="grid grid-cols-2 gap-3">
+        <FL label="Unidad de medida *">
+          <select value={f.unidad} onChange={e => set("unidad", e.target.value)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-teal-500/30">
+            {UNIDADES.map(u => <option key={u} value={u}>{u}</option>)}
+          </select>
+        </FL>
+        <FL label="Precio referencia (€)">
+          <Inp type="number" value={f.precio_unitario} onChange={v => set("precio_unitario", v)} placeholder="0.00" />
+        </FL>
+      </div>
+      <FL label="Estado">
+        <Sel value={f.activo ? "true" : "false"} onChange={v => set("activo", v === "true")}
+          options={[{ value: "true", label: "Activo — aparece en registros" }, { value: "false", label: "Inactivo — oculto en registros" }]} />
+      </FL>
+      <div className="mt-2 p-3 bg-blue-50 rounded-xl border border-blue-200 text-xs text-blue-700">
+        💡 El precio es orientativo. En cada registro diario el equipo puede ajustarlo si cambia.
+      </div>
+    </Modal>
+  );
 }
 
 function PanelObrasAdmin({onRefresh}){
