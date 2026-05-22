@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { createClient } from "@supabase/supabase-js";
-import { LoginScreen } from "./Auth.jsx";
+import { LoginScreen, ResetPasswordScreen } from "./Auth.jsx";
 import App from "./App.jsx";
 
 const SUPABASE_URL = "https://ragsmuubzjcxllvwdgfm.supabase.co";
@@ -8,8 +8,10 @@ const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 export default function AppRoot() {
-  const [session, setSession] = useState(undefined); // undefined = cargando
+  const [session, setSession] = useState(undefined);
   const [perfil, setPerfil] = useState(null);
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
 
   useEffect(() => {
     // Sesión inicial
@@ -18,11 +20,16 @@ export default function AppRoot() {
       if (session) loadPerfil(session.user.id);
     });
 
-    // Escuchar cambios de sesión
-    const { data: { subscription } } = sb.auth.onAuthStateChange((_event, session) => {
+    // Escuchar cambios de sesión y detectar recuperación de contraseña
+    const { data: { subscription } } = sb.auth.onAuthStateChange((event, session) => {
       setSession(session);
       if (session) loadPerfil(session.user.id);
       else setPerfil(null);
+
+      // Cuando Supabase detecta el token de recuperación en la URL
+      if (event === "PASSWORD_RECOVERY") {
+        setIsPasswordRecovery(true);
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -35,9 +42,10 @@ export default function AppRoot() {
 
   const handleLogout = async () => {
     await sb.auth.signOut();
+    setIsPasswordRecovery(false);
   };
 
-  // Cargando sesión
+  // Cargando
   if (session === undefined) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -46,17 +54,28 @@ export default function AppRoot() {
     );
   }
 
-  // No hay sesión → pantalla de login
+  // Recuperación de contraseña desde email (tiene sesión temporal pero debe cambiar pwd)
+  if (isPasswordRecovery || showChangePassword) {
+    return (
+      <ResetPasswordScreen
+        onDone={() => { setIsPasswordRecovery(false); setShowChangePassword(false); }}
+        isRecovery={isPasswordRecovery}
+      />
+    );
+  }
+
+  // Sin sesión → login
   if (!session) {
     return <LoginScreen onLogin={() => {}} />;
   }
 
-  // Hay sesión → app completa
+  // Con sesión → app completa
   return (
     <App
       user={session.user}
       perfil={perfil}
       onLogout={handleLogout}
+      onChangePassword={() => setShowChangePassword(true)}
     />
   );
 }
