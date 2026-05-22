@@ -953,7 +953,7 @@ function PanelObrasAdmin({onRefresh}){
 }
 
 // ── APP PRINCIPAL ─────────────────────────────────────────────────────────────
-export default function App({ user, perfil, onLogout }){
+export default function App({ user, perfil, onLogout, onChangePassword }){
   const esAdmin = !perfil || perfil?.rol === "admin";
   const esSondista = perfil?.rol === "sondista";
   const[tab,setTab]=useState("gantt");
@@ -1023,12 +1023,14 @@ export default function App({ user, perfil, onLogout }){
           </div>
         </div>
         <div className="flex items-center gap-2 ml-auto">
-          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-xl">
+          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-xl cursor-pointer hover:bg-gray-100 transition-colors group relative"
+            onClick={onChangePassword} title="Cambiar contraseña">
             <div className="w-6 h-6 rounded-full bg-teal-100 flex items-center justify-center text-xs font-medium text-teal-700">
               {(user?.email||"?")[0].toUpperCase()}
             </div>
             <span className="text-xs text-gray-600 max-w-[120px] truncate">{user?.email}</span>
             {perfil?.rol && <span className="text-xs px-1.5 py-0.5 bg-white border border-gray-200 rounded-md text-gray-500 capitalize">{perfil.rol}</span>}
+            <span className="text-xs text-gray-400 group-hover:text-teal-600 transition-colors">🔐</span>
           </div>
           {tab!=="admin" && (esAdmin || esSondista) && (
             <>
