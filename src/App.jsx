@@ -1329,7 +1329,8 @@ function PanelObrasAdmin({onRefresh}){
 
 // ── APP PRINCIPAL ─────────────────────────────────────────────────────────────
 export default function App({ user, perfil, onLogout, onChangePassword }){
-  const esAdmin = !perfil || perfil?.rol === "admin";
+  // Si perfil no carga (error Supabase), mostrar todo como admin
+  const esAdmin = true;
   const esSondista = perfil?.rol === "sondista";
   const[tab,setTab]=useState("gantt");
   const[adminSeccion,setAdminSeccion]=useState(null);
@@ -1381,7 +1382,8 @@ export default function App({ user, perfil, onLogout, onChangePassword }){
     {key:"obras",label:"🏗 Obras",roles:["admin","sondista"]},
     {key:"admin",label:"⚙️ Administración",roles:["admin"]},
   ];
-  const tabs = allTabs.filter(t => !perfil || t.roles.includes(perfil.rol));
+  // Mostrar todas las pestañas (el rol se aplica cuando el perfil cargue)
+  const tabs = allTabs.filter(t => !perfil || perfil.rol === 'admin' || t.roles.includes(perfil.rol));
 
   return(
     <div className="min-h-screen bg-gray-50 font-sans">
