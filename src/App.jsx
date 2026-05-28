@@ -262,22 +262,33 @@ function ModalRegistroDiario({show,onClose,asignaciones,camiones,personal,produc
     });
   },[show]);
 
-  // Al seleccionar obra, prerellenar equipo con los datos de la asignación
+  // Al seleccionar obra, prerellenar equipo si tiene asignación
   const handleAsigChange=(id)=>{
     setAsigId(id);
-    const asig=asignaciones.find(a=>a.id===id);
+    // Buscar si hay asignación para esta obra y prerellenar equipo
+    const asig=asignaciones.find(a=>a.obra_id===id);
     if(asig){
       setCamionId(asig.camion_id||"");
       setSondistaId(asig.sondista_id||"");
       setAyudanteId(asig.ayudante_id||"");
+    } else {
+      setCamionId(""); setSondistaId(""); setAyudanteId("");
     }
   };
 
   const upd=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
   const total=items.reduce((s,i)=>s+(parseFloat(i.cantidad)||0)*(parseFloat(i.precio)||0),0);
 
-  const asigOptions=asignaciones.map(a=>({value:a.id,label:`Obra #${a.obra?.numero_obra} · ${a.camion?.matricula||""}`}));
-  const asigSel=asignaciones.find(a=>a.id===asigId);
+  // Cargar todas las obras directamente (no solo las que tienen asignación)
+  const[todasObras,setTodasObras]=useState([]);
+  useEffect(()=>{
+    if(!show) return;
+    sb.from("obras").select("*").order("numero_obra").then(({data})=>setTodasObras(data||[]));
+  },[show]);
+
+  const asigOptions=todasObras.map(o=>({value:o.id,label:`Obra #${o.numero_obra}${o.nombre_via?" · "+[o.tipo_via,o.nombre_via,o.numero_via].filter(Boolean).join(" "):""}`}));
+  // asigSel ahora es la obra directamente
+  const asigSel=todasObras.find(o=>o.id===asigId);
 
   const sondistas=personal.filter(p=>p.rol==="sondista").map(p=>({value:p.id,label:p.nombre}));
   const ayudantes=personal.filter(p=>p.rol==="ayudante").map(p=>({value:p.id,label:p.nombre}));
@@ -285,8 +296,35 @@ function ModalRegistroDiario({show,onClose,asignaciones,camiones,personal,produc
   const handleSave=async()=>{
     if(!asigId||!fecha||!camionId||!sondistaId){return;}
     setSaving(true);
+
+    // ── Verificar si ya existe asignación para esta obra+camión
+    // Si no existe, crearla automáticamente para que aparezca en el Gantt
+    const asigExistente=asignaciones.find(a=>a.obra_id===asigId&&a.camion_id===camionId);
+    if(!asigExistente){
+      // Crear asignación retroactiva: fecha_inicio = fecha del registro, fecha_fin = misma fecha + 1 día por defecto
+      const fechaFin=toISO(addDays(new Date(fecha),1));
+      await sb.from("asignaciones").insert({
+        obra_id:asigId,
+        camion_id:camionId,
+        sondista_id:sondistaId,
+        ayudante_id:ayudanteId||null,
+        fecha_inicio:fecha,
+        fecha_fin:fechaFin
+      });
+    } else {
+      // Si existe asignación pero el registro es anterior a fecha_inicio, extender hacia atrás
+      if(fecha < asigExistente.fecha_inicio){
+        await sb.from("asignaciones").update({fecha_inicio:fecha}).eq("id",asigExistente.id);
+      }
+      // Si el registro es posterior a fecha_fin, extender hacia adelante
+      if(fecha > asigExistente.fecha_fin){
+        await sb.from("asignaciones").update({fecha_fin:fecha}).eq("id",asigExistente.id);
+      }
+    }
+
+    // ── Guardar el registro diario
     const reg={
-      obra_id:asigSel?.obra_id,
+      obra_id:asigId,
       camion_id:camionId,
       sondista_id:sondistaId,
       ayudante_id:ayudanteId||null,
@@ -297,10 +335,19 @@ function ModalRegistroDiario({show,onClose,asignaciones,camiones,personal,produc
       np_texto_libre:esNP&&npRazon==="Otros"?npTexto:null
     };
     const{data:rd}=await sb.from("registros_diarios").insert(reg).select().single();
+
+    // ── Guardar consumibles si no es día no productivo
     if(rd&&!esNP){
-      const rows=items.filter(i=>parseFloat(i.cantidad)>0).map(i=>({obra_id:asigSel.obra_id,producto_id:i.producto_id,cantidad:parseFloat(i.cantidad),precio_unitario:parseFloat(i.precio),registro_diario_id:rd.id}));
+      const rows=items.filter(i=>parseFloat(i.cantidad)>0).map(i=>({
+        obra_id:asigId,
+        producto_id:i.producto_id,
+        cantidad:parseFloat(i.cantidad),
+        precio_unitario:parseFloat(i.precio),
+        registro_diario_id:rd.id
+      }));
       if(rows.length>0) await sb.from("inventario").insert(rows);
     }
+
     setSaving(false);onSaved();onClose();
   };
 
