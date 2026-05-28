@@ -245,30 +245,57 @@ function ModalRegistroDiario({show,onClose,asignaciones,camiones,personal,produc
   const[npTexto,setNpTexto]=useState("");
   const[items,setItems]=useState([]);
   const[saving,setSaving]=useState(false);
+  // Selección manual de equipo
+  const[camionId,setCamionId]=useState("");
+  const[sondistaId,setSondistaId]=useState("");
+  const[ayudanteId,setAyudanteId]=useState("");
 
   useEffect(()=>{
     if(!show) return;
-    // Cargar TODOS los productos activos de la BD
-    sb.from("productos").select("*").eq("activo", true).order("nombre").then(({ data }) => {
-      const prods = data || [];
-      if (prods.length > 0) {
-        setItems(prods.map(p => ({ producto_id: p.id, nombre: p.nombre, unidad: p.unidad, cantidad: 0, precio: p.precio_unitario })));
-      } else {
-        setItems([]);
-      }
+    // Resetear campos
+    setAsigId(""); setFecha(toISO(new Date())); setMetros(""); setEsNP(false);
+    setNpRazon(""); setNpTexto(""); setCamionId(""); setSondistaId(""); setAyudanteId("");
+    // Cargar productos activos
+    sb.from("productos").select("*").eq("activo",true).order("nombre").then(({data})=>{
+      const prods=data||[];
+      setItems(prods.length>0 ? prods.map(p=>({producto_id:p.id,nombre:p.nombre,unidad:p.unidad,cantidad:0,precio:p.precio_unitario})) : []);
     });
   },[show]);
+
+  // Al seleccionar obra, prerellenar equipo con los datos de la asignación
+  const handleAsigChange=(id)=>{
+    setAsigId(id);
+    const asig=asignaciones.find(a=>a.id===id);
+    if(asig){
+      setCamionId(asig.camion_id||"");
+      setSondistaId(asig.sondista_id||"");
+      setAyudanteId(asig.ayudante_id||"");
+    }
+  };
 
   const upd=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
   const total=items.reduce((s,i)=>s+(parseFloat(i.cantidad)||0)*(parseFloat(i.precio)||0),0);
 
-  const asigOptions=asignaciones.map(a=>({value:a.id,label:`Obra #${a.obra?.numero_obra} · ${a.camion?.matricula||""} · ${a.sondista?.nombre||""}`}));
+  const asigOptions=asignaciones.map(a=>({value:a.id,label:`Obra #${a.obra?.numero_obra} · ${a.camion?.matricula||""}`}));
   const asigSel=asignaciones.find(a=>a.id===asigId);
 
+  const sondistas=personal.filter(p=>p.rol==="sondista").map(p=>({value:p.id,label:p.nombre}));
+  const ayudantes=personal.filter(p=>p.rol==="ayudante").map(p=>({value:p.id,label:p.nombre}));
+
   const handleSave=async()=>{
-    if(!asigId||!fecha){return;}
+    if(!asigId||!fecha||!camionId||!sondistaId){return;}
     setSaving(true);
-    const reg={obra_id:asigSel?.obra_id,camion_id:asigSel?.camion_id,sondista_id:asigSel?.sondista_id,ayudante_id:asigSel?.ayudante_id||null,fecha,metros_sondeados:parseFloat(metros)||0,es_dia_no_productivo:esNP,np_razon:esNP?npRazon:null,np_texto_libre:esNP&&npRazon==="Otros"?npTexto:null};
+    const reg={
+      obra_id:asigSel?.obra_id,
+      camion_id:camionId,
+      sondista_id:sondistaId,
+      ayudante_id:ayudanteId||null,
+      fecha,
+      metros_sondeados:parseFloat(metros)||0,
+      es_dia_no_productivo:esNP,
+      np_razon:esNP?npRazon:null,
+      np_texto_libre:esNP&&npRazon==="Otros"?npTexto:null
+    };
     const{data:rd}=await sb.from("registros_diarios").insert(reg).select().single();
     if(rd&&!esNP){
       const rows=items.filter(i=>parseFloat(i.cantidad)>0).map(i=>({obra_id:asigSel.obra_id,producto_id:i.producto_id,cantidad:parseFloat(i.cantidad),precio_unitario:parseFloat(i.precio),registro_diario_id:rd.id}));
@@ -279,10 +306,15 @@ function ModalRegistroDiario({show,onClose,asignaciones,camiones,personal,produc
 
   return(
     <Modal show={show} onClose={onClose} wide title="📋 Registro diario — metros y consumibles"
-      footer={<div className="flex justify-end gap-2"><Btn variant="secondary" onClick={onClose}>Cancelar</Btn><Btn onClick={handleSave} disabled={saving||!asigId}>{saving?"Guardando...":"💾 Guardar registro"}</Btn></div>}>
+      footer={<div className="flex justify-end gap-2"><Btn variant="secondary" onClick={onClose}>Cancelar</Btn><Btn onClick={handleSave} disabled={saving||!asigId||!camionId||!sondistaId}>{saving?"Guardando...":"💾 Guardar registro"}</Btn></div>}>
       <div className="grid grid-cols-2 gap-3 mb-3">
-        <FL label="Asignación / Obra *"><Sel value={asigId} onChange={setAsigId} placeholder="Selecciona obra" options={asigOptions}/></FL>
+        <FL label="Obra *"><Sel value={asigId} onChange={handleAsigChange} placeholder="Selecciona obra" options={asigOptions}/></FL>
         <FL label="Fecha *"><Inp type="date" value={fecha} onChange={setFecha}/></FL>
+      </div>
+      <div className="grid grid-cols-3 gap-3 mb-3">
+        <FL label="Camión *"><Sel value={camionId} onChange={setCamionId} placeholder="Selecciona camión" options={camiones.map(c=>({value:c.id,label:`${c.matricula} · ${c.nombre}`}))}/></FL>
+        <FL label="Sondista *"><Sel value={sondistaId} onChange={setSondistaId} placeholder="Selecciona sondista" options={sondistas}/></FL>
+        <FL label="Ayudante"><Sel value={ayudanteId} onChange={setAyudanteId} placeholder="Selecciona ayudante" options={ayudantes}/></FL>
       </div>
       <div className="flex items-center gap-3 mb-3 p-3 bg-teal-50 rounded-xl border border-teal-200">
         <span className="text-2xl">📏</span>
