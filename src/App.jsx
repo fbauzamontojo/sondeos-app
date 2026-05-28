@@ -367,7 +367,7 @@ function ModalRegistroDiario({show,onClose,asignaciones,camiones,personal,produc
         <span className="text-2xl">📏</span>
         <div className="flex-1">
           <p className="text-xs font-medium text-teal-700 uppercase tracking-wide mb-1">Metros sondeados hoy</p>
-          <input type="number" min="0" step="0.1" value={metros} onChange={e=>setMetros(e.target.value)} placeholder="0.0"
+          <input type="number" value={metros} onChange={e=>setMetros(e.target.value)} placeholder="0.0"
             className="w-full border border-teal-200 rounded-lg px-3 py-2 text-lg font-medium text-teal-800 bg-white focus:outline-none focus:ring-2 focus:ring-teal-400/40"/>
         </div>
         <div className="text-xs text-teal-600 font-medium">metros</div>
@@ -782,6 +782,238 @@ function PanelKPIs({camiones,personal,asignaciones,registros,onGoAdmin}){
 }
 
 // ── PANEL OBRAS ───────────────────────────────────────────────────────────────
+
+// ── PANEL REGISTROS DIARIOS ───────────────────────────────────────────────────
+function ModalEditarRegistro({show, registro, onClose, onSaved, camiones, personal, productos}){
+  const[metros,setMetros]=useState("");
+  const[camionId,setCamionId]=useState("");
+  const[sondistaId,setSondistaId]=useState("");
+  const[ayudanteId,setAyudanteId]=useState("");
+  const[esNP,setEsNP]=useState(false);
+  const[npRazon,setNpRazon]=useState("");
+  const[npTexto,setNpTexto]=useState("");
+  const[items,setItems]=useState([]);
+  const[saving,setSaving]=useState(false);
+
+  useEffect(()=>{
+    if(!show||!registro) return;
+    setMetros(registro.metros_sondeados||"");
+    setCamionId(registro.camion_id||"");
+    setSondistaId(registro.sondista_id||"");
+    setAyudanteId(registro.ayudante_id||"");
+    setEsNP(registro.es_dia_no_productivo||false);
+    setNpRazon(registro.np_razon||"");
+    setNpTexto(registro.np_texto_libre||"");
+    // Cargar consumibles del registro
+    sb.from("inventario").select("*, producto:productos(*)").eq("registro_diario_id", registro.id).then(({data})=>{
+      if(data&&data.length>0){
+        setItems(data.map(d=>({id:d.id,producto_id:d.producto_id,nombre:d.producto?.nombre||"",unidad:d.producto?.unidad||"",cantidad:d.cantidad,precio:d.precio_unitario})));
+      } else {
+        sb.from("productos").select("*").eq("activo",true).order("nombre").then(({data:prods})=>{
+          setItems((prods||[]).map(p=>({producto_id:p.id,nombre:p.nombre,unidad:p.unidad,cantidad:0,precio:p.precio_unitario})));
+        });
+      }
+    });
+  },[show,registro]);
+
+  const upd=(i,k,v)=>setItems(prev=>prev.map((it,idx)=>idx===i?{...it,[k]:v}:it));
+  const total=items.reduce((s,i)=>s+(parseFloat(i.cantidad)||0)*(parseFloat(i.precio)||0),0);
+
+  const handleSave=async()=>{
+    setSaving(true);
+    await sb.from("registros_diarios").update({
+      metros_sondeados:parseFloat(metros)||0,
+      camion_id:camionId||null,
+      sondista_id:sondistaId||null,
+      ayudante_id:ayudanteId||null,
+      es_dia_no_productivo:esNP,
+      np_razon:esNP?npRazon:null,
+      np_texto_libre:esNP&&npRazon==="Otros"?npTexto:null
+    }).eq("id",registro.id);
+    // Actualizar consumibles
+    await sb.from("inventario").delete().eq("registro_diario_id",registro.id);
+    if(!esNP){
+      const rows=items.filter(i=>parseFloat(i.cantidad)>0).map(i=>({
+        obra_id:registro.obra_id,producto_id:i.producto_id,
+        cantidad:parseFloat(i.cantidad),precio_unitario:parseFloat(i.precio),
+        registro_diario_id:registro.id
+      }));
+      if(rows.length>0) await sb.from("inventario").insert(rows);
+    }
+    setSaving(false);onSaved();onClose();
+  };
+
+  const sondistas=personal.filter(p=>p.rol==="sondista").map(p=>({value:p.id,label:p.nombre}));
+  const ayudantes=personal.filter(p=>p.rol==="ayudante").map(p=>({value:p.id,label:p.nombre}));
+
+  return(
+    <Modal show={show} onClose={onClose} wide title={`✏️ Editar registro — ${registro?.fecha||""}`}
+      footer={<div className="flex justify-end gap-2"><Btn variant="secondary" onClick={onClose}>Cancelar</Btn><Btn onClick={handleSave} disabled={saving}>{saving?"Guardando...":"💾 Guardar cambios"}</Btn></div>}>
+      <div className="grid grid-cols-3 gap-3 mb-3">
+        <FL label="Camión"><Sel value={camionId} onChange={setCamionId} placeholder="Camión" options={camiones.map(c=>({value:c.id,label:`${c.matricula}`}))}/></FL>
+        <FL label="Sondista"><Sel value={sondistaId} onChange={setSondistaId} placeholder="Sondista" options={sondistas}/></FL>
+        <FL label="Ayudante"><Sel value={ayudanteId} onChange={setAyudanteId} placeholder="Ayudante" options={ayudantes}/></FL>
+      </div>
+      <div className="flex items-center gap-3 mb-3 p-3 bg-teal-50 rounded-xl border border-teal-200">
+        <span className="text-2xl">📏</span>
+        <div className="flex-1">
+          <p className="text-xs font-medium text-teal-700 uppercase tracking-wide mb-1">Metros sondeados</p>
+          <input type="number" value={metros} onChange={e=>setMetros(e.target.value)} placeholder="0.0"
+            className="w-full border border-teal-200 rounded-lg px-3 py-2 text-lg font-medium text-teal-800 bg-white focus:outline-none focus:ring-2 focus:ring-teal-400/40"/>
+        </div>
+        <div className="text-xs text-teal-600 font-medium">metros</div>
+      </div>
+      <div className="flex items-center gap-3 mb-3 p-3 bg-orange-50 rounded-xl border border-orange-200">
+        <input type="checkbox" checked={esNP} onChange={e=>setEsNP(e.target.checked)} className="w-4 h-4 accent-orange-500"/>
+        <span className="text-sm text-orange-700 font-medium">⚠️ Día no productivo</span>
+      </div>
+      {esNP&&(
+        <div className="mb-3 p-3 bg-orange-50 rounded-xl border border-orange-200">
+          <div className="grid grid-cols-2 gap-1">
+            {NP_REASONS.map(r=><button key={r} onClick={()=>setNpRazon(r)} className={`text-left px-3 py-2 rounded-lg text-xs border transition-colors ${npRazon===r?"bg-orange-100 border-orange-300 text-orange-800 font-medium":"bg-white border-gray-200 text-gray-700 hover:bg-orange-50"}`}>{r}</button>)}
+          </div>
+          {npRazon==="Otros"&&<textarea value={npTexto} onChange={e=>setNpTexto(e.target.value.slice(0,260))} placeholder="Describe el motivo..." className="mt-2 w-full border border-orange-200 rounded-lg px-3 py-2 text-sm h-16 resize-none"/>}
+        </div>
+      )}
+      {!esNP&&items.length>0&&(
+        <>
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2 border-t border-gray-100 pt-3">Consumibles</p>
+          <table className="w-full text-sm mb-3">
+            <thead><tr className="border-b border-gray-100"><th className="text-left pb-2 text-xs text-gray-500 font-medium">Producto</th><th className="text-center pb-2 text-xs text-gray-500 font-medium w-16">Uds.</th><th className="text-center pb-2 text-xs text-gray-500 font-medium w-20">€/ud</th><th className="text-right pb-2 text-xs text-gray-500 font-medium w-20">Total</th></tr></thead>
+            <tbody>
+              {items.map((it,i)=>(
+                <tr key={i} className="border-b border-gray-50">
+                  <td className="py-2 pr-2 text-gray-800 text-xs">{it.nombre} <span className="text-gray-400">({it.unidad})</span></td>
+                  <td className="py-2 px-1"><input type="number" value={it.cantidad} onChange={e=>upd(i,"cantidad",e.target.value)} className="w-full border border-gray-200 rounded px-2 py-1 text-xs text-center"/></td>
+                  <td className="py-2 px-1"><input type="number" value={it.precio} onChange={e=>upd(i,"precio",e.target.value)} className="w-full border border-gray-200 rounded px-2 py-1 text-xs text-center"/></td>
+                  <td className="py-2 pl-2 text-right font-medium text-xs">{((parseFloat(it.cantidad)||0)*(parseFloat(it.precio)||0)).toFixed(2)}€</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="flex justify-between items-center bg-teal-50 rounded-xl px-4 py-3 border border-teal-200">
+            <span className="text-sm text-teal-700">Coste total</span>
+            <span className="text-lg font-medium text-teal-800">{total.toFixed(2)} €</span>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+function PanelRegistros({camiones, personal, productos, onRefresh}){
+  const[registros,setRegistros]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[filtroFecha,setFiltroFecha]=useState("");
+  const[filtroSondista,setFiltroSondista]=useState("");
+  const[filtroCamion,setFiltroCamion]=useState("");
+  const[editando,setEditando]=useState(null);
+  const[confirm,setConfirm]=useState(null);
+
+  const load=useCallback(async()=>{
+    setLoading(true);
+    const{data}=await sb.from("registros_diarios")
+      .select("*, obra:obras(numero_obra), camion:camiones(nombre,matricula), sondista:personal!registros_diarios_sondista_id_fkey(nombre), ayudante:personal!registros_diarios_ayudante_id_fkey(nombre)")
+      .order("fecha",{ascending:false});
+    setRegistros(data||[]);
+    setLoading(false);
+  },[]);
+
+  useEffect(()=>{ load(); },[load]);
+
+  const eliminar=async(id)=>{
+    await sb.from("inventario").delete().eq("registro_diario_id",id);
+    await sb.from("registros_diarios").delete().eq("id",id);
+    setConfirm(null); load(); onRefresh();
+  };
+
+  const filtered=registros.filter(r=>{
+    if(filtroFecha&&!r.fecha.includes(filtroFecha)) return false;
+    if(filtroSondista&&r.sondista_id!==filtroSondista) return false;
+    if(filtroCamion&&r.camion_id!==filtroCamion) return false;
+    return true;
+  });
+
+  const sondistas=personal.filter(p=>p.rol==="sondista").map(p=>({value:p.id,label:p.nombre}));
+
+  return(
+    <div>
+      {/* Filtros */}
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500">Fecha:</span>
+          <Inp type="month" value={filtroFecha} onChange={setFiltroFecha} className="text-xs py-1 w-36"/>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500">Sondista:</span>
+          <Sel value={filtroSondista} onChange={setFiltroSondista} placeholder="Todos" options={sondistas}/>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500">Camión:</span>
+          <Sel value={filtroCamion} onChange={setFiltroCamion} placeholder="Todos" options={camiones.map(c=>({value:c.id,label:c.matricula}))}/>
+        </div>
+        {(filtroFecha||filtroSondista||filtroCamion)&&(
+          <button onClick={()=>{setFiltroFecha("");setFiltroSondista("");setFiltroCamion("");}} className="text-xs text-gray-400 hover:text-gray-600">✕ Limpiar</button>
+        )}
+        <span className="ml-auto text-xs text-gray-400">{filtered.length} registros</span>
+      </div>
+
+      {loading&&<div className="text-center py-10 text-gray-400 text-sm">Cargando registros...</div>}
+      {!loading&&filtered.length===0&&<div className="text-center py-10 text-gray-400 text-sm">No hay registros con esos filtros</div>}
+
+      {/* Tabla */}
+      {!loading&&filtered.length>0&&(
+        <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 bg-gray-50">
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">Fecha</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">Obra</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">Camión</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">Sondista</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500">Ayudante</th>
+                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500">Metros</th>
+                <th className="text-center px-4 py-3 text-xs font-medium text-gray-500">Estado</th>
+                <th className="text-center px-4 py-3 text-xs font-medium text-gray-500">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(r=>(
+                <tr key={r.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                  <td className="px-4 py-3 text-xs font-medium text-gray-700">{fmtDate(r.fecha)}</td>
+                  <td className="px-4 py-3 text-xs text-gray-600">#{r.obra?.numero_obra||"—"}</td>
+                  <td className="px-4 py-3 text-xs text-gray-600">{r.camion?.matricula||"—"}</td>
+                  <td className="px-4 py-3 text-xs text-gray-600">{r.sondista?.nombre||"—"}</td>
+                  <td className="px-4 py-3 text-xs text-gray-600">{r.ayudante?.nombre||"—"}</td>
+                  <td className="px-4 py-3 text-right">
+                    {r.es_dia_no_productivo
+                      ? <span className="text-xs text-orange-500">—</span>
+                      : <span className="text-xs font-medium text-teal-700">{parseFloat(r.metros_sondeados||0).toFixed(1)} m</span>}
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    {r.es_dia_no_productivo
+                      ? <span className="text-xs px-2 py-0.5 bg-orange-50 text-orange-700 border border-orange-200 rounded-full">⚠️ No productivo</span>
+                      : <span className="text-xs px-2 py-0.5 bg-teal-50 text-teal-700 border border-teal-200 rounded-full">✓ Productivo</span>}
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <div className="flex items-center justify-center gap-1">
+                      <button onClick={()=>setEditando(r)} className="text-xs text-gray-400 hover:text-gray-700 px-2 py-1 rounded border border-gray-200 hover:bg-gray-50">✏️</button>
+                      <button onClick={()=>setConfirm({id:r.id,fecha:r.fecha})} className="text-xs text-red-400 hover:text-red-700 px-2 py-1 rounded border border-red-100 hover:bg-red-50">🗑</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <ModalEditarRegistro show={!!editando} registro={editando} onClose={()=>setEditando(null)} onSaved={()=>{load();onRefresh();}} camiones={camiones} personal={personal} productos={productos}/>
+      <ConfirmDialog show={!!confirm} message={`¿Eliminar el registro del ${confirm?.fecha}? Se borrarán también los consumibles asociados.`} onConfirm={()=>eliminar(confirm.id)} onCancel={()=>setConfirm(null)}/>
+    </div>
+  );
+}
+
 function PanelObras({asignaciones,productos,registros}){
   const[filtroEstado,setFiltroEstado]=useState("todas");
   const[filtroTexto,setFiltroTexto]=useState("");
@@ -1193,6 +1425,7 @@ export default function App({ user, perfil, onLogout, onChangePassword }){
             {tab==="gantt"&&<Gantt camiones={camiones} asignaciones={asignaciones} registros={registros} onBarClick={setDetalle}/>}
             {tab==="kpis"&&<PanelKPIs camiones={camiones} personal={personal} asignaciones={asignaciones} registros={registros} onGoAdmin={goAdmin}/>}
             {tab==="obras"&&<PanelObras asignaciones={asignaciones} productos={productos} registros={registros}/>}
+            {tab==="registros"&&<PanelRegistros camiones={camiones} personal={personal} productos={productos} onRefresh={loadAll}/>}
             {tab==="admin"&&<PanelAdmin camiones={camiones} personal={personal} seccionInicial={adminSeccion} onRefresh={loadAll}/>}
           </>
         }
