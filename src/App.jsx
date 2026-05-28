@@ -422,16 +422,41 @@ function Gantt({camiones,asignaciones,registros,onBarClick}){
   const[escalaKey,setEscalaKey]=useState("semana");
   const[filtro,setFiltro]=useState("todos");
   const[filterInput,setFilterInput]=useState("");
+  // offsetDays: días de desplazamiento desde hoy (negativo = pasado, positivo = futuro)
+  const[offsetDays,setOffsetDays]=useState(0);
 
   const esc=ESCALAS.find(e=>e.key===escalaKey);
-  const cols=esc.getDays();
-  const totalDays=daysBetween(cols[0],addDays(cols[cols.length-1],escalaKey==="semana"||escalaKey==="mes"?1:7));
 
-  const npByAsig={};
-  registros.filter(r=>r.es_dia_no_productivo).forEach(r=>{
-    const key=r.obra_id+"-"+r.fecha;
-    if(!npByAsig[key]) npByAsig[key]={razon:r.np_razon};
-  });
+  // Fecha base = hoy + offset
+  const baseDate=useMemo(()=>{
+    const d=new Date(); d.setHours(0,0,0,0);
+    return addDays(d,offsetDays);
+  },[offsetDays]);
+
+  // Generar columnas desde baseDate
+  const cols=useMemo(()=>{
+    if(escalaKey==="semana") return Array.from({length:7},(_,i)=>addDays(baseDate,i));
+    if(escalaKey==="mes")    return Array.from({length:30},(_,i)=>addDays(baseDate,i));
+    if(escalaKey==="3m")     return Array.from({length:12},(_,i)=>addDays(baseDate,i*7));
+    return Array.from({length:12},(_,i)=>addDays(baseDate,i*15));
+  },[escalaKey,baseDate]);
+
+  const spanDays=escalaKey==="semana"?7:escalaKey==="mes"?30:escalaKey==="3m"?84:180;
+
+  // Salto del slider según escala
+  const sliderStep=escalaKey==="semana"?1:escalaKey==="mes"?7:30;
+  const sliderMin=-365;
+  const sliderMax=365;
+
+  // Label de periodo mostrado
+  const periodoLabel=useMemo(()=>{
+    const ini=cols[0];
+    const fin=cols[cols.length-1];
+    const fmtShort=(d)=>d.toLocaleDateString("es-ES",{day:"2-digit",month:"short",year:"numeric"});
+    return `${fmtShort(ini)} — ${fmtShort(fin)}`;
+  },[cols]);
+
+  const isHoy=offsetDays===0;
 
   const filteredCamiones=camiones.filter(c=>{
     if(filtro==="todos") return true;
@@ -445,36 +470,70 @@ function Gantt({camiones,asignaciones,registros,onBarClick}){
 
   return(
     <div>
-      <div className="flex flex-wrap items-center gap-2 mb-4">
+      {/* Controles superiores */}
+      <div className="flex flex-wrap items-center gap-2 mb-3">
         <span className="text-xs text-gray-500 font-medium">Escala:</span>
         {ESCALAS.map(e=>(
-          <button key={e.key} onClick={()=>setEscalaKey(e.key)}
+          <button key={e.key} onClick={()=>{setEscalaKey(e.key);setOffsetDays(0);}}
             className={`px-3 py-1 rounded-lg text-xs border transition-colors ${escalaKey===e.key?"bg-blue-50 border-blue-300 text-blue-700 font-medium":"bg-white border-gray-200 text-gray-500 hover:bg-gray-50"}`}>
             {e.label}
           </button>
         ))}
         <span className="text-xs text-gray-500 font-medium ml-3">Filtrar:</span>
         <select value={filtro} onChange={e=>{setFiltro(e.target.value);setFilterInput("");}} className="border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white">
-          <option value="todos">Todos</option><option value="obra">Por nº obra</option><option value="cp">Por C.P.</option><option value="provincia">Por provincia</option>
+          <option value="todos">Todos</option>
+          <option value="obra">Por nº obra</option>
+          <option value="cp">Por C.P.</option>
+          <option value="provincia">Por provincia</option>
         </select>
         {filtro!=="todos"&&<Inp value={filterInput} onChange={setFilterInput} placeholder={filtro==="obra"?"Nº obra...":filtro==="cp"?"C.P....":"Provincia..."} className="w-32 text-xs py-1"/>}
       </div>
+
+      {/* Slider de navegación temporal */}
+      <div className="bg-white border border-gray-200 rounded-2xl px-4 py-3 mb-3">
+        <div className="flex items-center gap-3 mb-2">
+          <button onClick={()=>setOffsetDays(p=>p-sliderStep)}
+            className="w-7 h-7 rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 flex items-center justify-center text-gray-600 text-sm font-bold transition-colors">‹</button>
+          <div className="flex-1">
+            <input type="range" min={sliderMin} max={sliderMax} step={sliderStep} value={offsetDays}
+              onChange={e=>setOffsetDays(parseInt(e.target.value))}
+              className="w-full accent-teal-600 cursor-pointer"/>
+          </div>
+          <button onClick={()=>setOffsetDays(p=>p+sliderStep)}
+            className="w-7 h-7 rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 flex items-center justify-center text-gray-600 text-sm font-bold transition-colors">›</button>
+          <button onClick={()=>setOffsetDays(0)}
+            className={`px-3 py-1 rounded-lg text-xs border transition-colors ${isHoy?"bg-teal-50 border-teal-300 text-teal-700 font-medium":"bg-white border-gray-200 text-gray-500 hover:bg-teal-50 hover:border-teal-200 hover:text-teal-700"}`}>
+            Hoy
+          </button>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-gray-400">
+            {offsetDays<0?`← ${Math.abs(offsetDays)} días atrás`:offsetDays>0?`${offsetDays} días adelante →`:"Periodo actual"}
+          </span>
+          <span className="text-xs font-medium text-gray-600">{periodoLabel}</span>
+        </div>
+      </div>
+
+      {/* Gantt */}
       <div className="bg-white rounded-2xl border border-gray-200 overflow-x-auto">
-        <div className="flex border-b border-gray-100" style={{minWidth: cols.length>14?`${cols.length*42+176}px`:"100%"}}>
+        <div className="flex border-b border-gray-100" style={{minWidth:cols.length>14?`${cols.length*42+176}px`:"100%"}}>
           <div className="w-44 shrink-0 bg-gray-50 px-4 py-3 text-xs font-medium text-gray-500 border-r border-gray-100">Camión</div>
           <div className="flex-1 grid" style={{gridTemplateColumns:`repeat(${cols.length},1fr)`}}>
-            {cols.map((d,i)=>(
-              <div key={i} className={`px-1 py-2 text-xs text-center border-r border-gray-100 last:border-r-0 font-medium ${d.getDay()===0||d.getDay()===6?"text-gray-300":"text-gray-400"}`} style={{minWidth:escalaKey==="mes"?"38px":"auto"}}>
-                {esc.fmt(d)}
-              </div>
-            ))}
+            {cols.map((d,i)=>{
+              const esHoy=toISO(d)===toISO(new Date());
+              return(
+                <div key={i} className={`px-1 py-2 text-xs text-center border-r border-gray-100 last:border-r-0 font-medium ${esHoy?"bg-teal-50 text-teal-700":d.getDay()===0||d.getDay()===6?"text-gray-300":"text-gray-400"}`}
+                  style={{minWidth:escalaKey==="mes"?"38px":"auto"}}>
+                  {esc.fmt(d)}
+                  {esHoy&&<div className="w-1 h-1 rounded-full bg-teal-500 mx-auto mt-0.5"></div>}
+                </div>
+              );
+            })}
           </div>
         </div>
         {filteredCamiones.length===0&&<div className="px-4 py-10 text-sm text-gray-400 text-center">No hay resultados para ese filtro</div>}
         {filteredCamiones.map((c,ci)=>{
           const asigs=asignaciones.filter(a=>a.camion_id===c.id);
-          const hoy=cols[0];
-          const spanDays=escalaKey==="semana"?7:escalaKey==="mes"?30:escalaKey==="3m"?84:180;
           return(
             <div key={c.id} className="flex border-b border-gray-100 last:border-b-0" style={{minHeight:52,minWidth:cols.length>14?`${cols.length*42+176}px`:"100%"}}>
               <div className="w-44 shrink-0 bg-gray-50 px-3 py-3 border-r border-gray-100 flex items-center gap-2">
@@ -483,11 +542,14 @@ function Gantt({camiones,asignaciones,registros,onBarClick}){
               </div>
               <div className="flex-1 relative" style={{minHeight:52}}>
                 <div className="absolute inset-0 grid pointer-events-none" style={{gridTemplateColumns:`repeat(${cols.length},1fr)`}}>
-                  {cols.map((d,i)=><div key={i} className={`border-r border-gray-100 last:border-r-0 h-full ${d.getDay()===0||d.getDay()===6?"bg-gray-50/50":""}`}/>)}
+                  {cols.map((d,i)=>{
+                    const esHoy=toISO(d)===toISO(new Date());
+                    return <div key={i} className={`border-r border-gray-100 last:border-r-0 h-full ${esHoy?"bg-teal-50/40":d.getDay()===0||d.getDay()===6?"bg-gray-50/50":""}`}/>;
+                  })}
                 </div>
                 {asigs.map((a)=>{
-                  const start=daysBetween(hoy,a.fecha_inicio);
-                  const end=daysBetween(hoy,a.fecha_fin);
+                  const start=daysBetween(baseDate,a.fecha_inicio);
+                  const end=daysBetween(baseDate,a.fecha_fin);
                   if(end<0||start>spanDays) return null;
                   const left=Math.max(0,(start/spanDays)*100);
                   const right=Math.min(100,((end+1)/spanDays)*100);
@@ -498,7 +560,8 @@ function Gantt({camiones,asignaciones,registros,onBarClick}){
                   return(
                     <div key={a.id} onClick={()=>onBarClick(a)}
                       title={`Obra #${a.obra?.numero_obra}`}
-                      style={{left:`${left}%`,width:`${width}%`,background:hasNP?"transparent":col,border:hasNP?`2px dashed #f97316`:"none",top:"50%",transform:"translateY(-50%)"}}
+                      style={{left:`${left}%`,width:`${width}%`,background:hasNP?"transparent":col,
+                        border:hasNP?`2px dashed #f97316`:"none",top:"50%",transform:"translateY(-50%)"}}
                       className="absolute h-7 rounded-md flex items-center px-2 cursor-pointer hover:brightness-90 transition-all overflow-hidden">
                       {hasNP&&<span className="text-xs mr-1" style={{color:"#f97316"}}>⚠️</span>}
                       <span className="text-xs font-medium truncate" style={{color:hasNP?"#f97316":"white",textShadow:hasNP?"none":"0 1px 2px rgba(0,0,0,0.3)"}}>#{a.obra?.numero_obra}</span>
@@ -513,6 +576,7 @@ function Gantt({camiones,asignaciones,registros,onBarClick}){
     </div>
   );
 }
+
 
 // ── PANEL KPIs ────────────────────────────────────────────────────────────────
 function PanelKPIs({camiones,personal,asignaciones,registros,onGoAdmin}){
